@@ -12,9 +12,6 @@ interface ServiceConfig {
     baseURL?: string;
 }
 
-const VIDEO_SECONDS_VALUES: ReadonlyArray<VideoSeconds> = ['4', '8', '12'];
-const VIDEO_SIZE_VALUES: ReadonlyArray<VideoSize> = ['720x1280', '1280x720', '1024x1792', '1792x1024'];
-
 export class VideoService {
     private config: ServiceConfig;
 
@@ -23,20 +20,24 @@ export class VideoService {
     }
 
     private normalizeSeconds(value: number | string): VideoSeconds {
+        // Accept any positive integer duration
         const secondsValue = value.toString();
-        if (VIDEO_SECONDS_VALUES.includes(secondsValue as VideoSeconds)) {
-            return secondsValue as VideoSeconds;
+        const numericValue = parseInt(secondsValue, 10);
+
+        if (isNaN(numericValue) || numericValue <= 0) {
+            throw new Error(`Invalid duration: ${value}. Duration must be a positive number.`);
         }
 
-        throw new Error(`Unsupported clip duration: ${value}`);
+        return secondsValue as VideoSeconds;
     }
 
     private normalizeSize(value: string): VideoSize {
-        if (VIDEO_SIZE_VALUES.includes(value as VideoSize)) {
-            return value as VideoSize;
+        // Accept any size in format WIDTHxHEIGHT
+        const sizeRegex = /^\d+x\d+$/;
+        if (!sizeRegex.test(value)) {
+            throw new Error(`Invalid video size format: ${value}. Must be in format WIDTHxHEIGHT (e.g., 1280x720)`);
         }
-
-        throw new Error(`Unsupported video size: ${value}`);
+        return value as VideoSize;
     }
 
     private handleFrontendError(error: unknown): never {

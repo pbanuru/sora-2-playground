@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Loader2, Sparkles } from 'lucide-react';
+import { Loader2, Sparkles, Upload, X } from 'lucide-react';
 import * as React from 'react';
 
 export type CreationFormData = {
@@ -53,6 +53,27 @@ export function CreationForm({
     inputReference,
     setInputReference
 }: CreationFormProps) {
+    // Calculate estimated cost
+    const calculateEstimatedCost = (): number => {
+        const duration = parseInt(seconds as string);
+        let pricePerSecond = 0;
+
+        if (model === 'sora-2') {
+            pricePerSecond = 0.10;
+        } else if (model === 'sora-2-pro') {
+            // Check if it's 1080p resolution
+            if (size === '1024x1792' || size === '1792x1024') {
+                pricePerSecond = 0.50;
+            } else {
+                pricePerSecond = 0.30;
+            }
+        }
+
+        return duration * pricePerSecond;
+    };
+
+    const estimatedCost = calculateEstimatedCost();
+
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const formData: CreationFormData = {
@@ -67,16 +88,110 @@ export function CreationForm({
         onSubmit(formData);
     };
 
-    const handleInputReferenceChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fileInputRef = React.useRef<HTMLInputElement>(null);
+    const [previewUrl, setPreviewUrl] = React.useState<string | null>(null);
+
+    const detectAndSetDimensions = (file: File): Promise<void> => {
+        return new Promise((resolve) => {
+            if (file.type.startsWith('image/')) {
+                const img = new Image();
+                img.onload = () => {
+                    const detectedSize = `${img.width}x${img.height}` as VideoSize;
+                    setSize(detectedSize);
+                    URL.revokeObjectURL(img.src);
+                    resolve();
+                };
+                img.onerror = () => {
+                    resolve(); // Continue even if detection fails
+                };
+                img.src = URL.createObjectURL(file);
+            } else if (file.type.startsWith('video/')) {
+                const video = document.createElement('video');
+                video.onloadedmetadata = () => {
+                    const detectedSize = `${video.videoWidth}x${video.videoHeight}` as VideoSize;
+                    setSize(detectedSize);
+                    URL.revokeObjectURL(video.src);
+                    resolve();
+                };
+                video.onerror = () => {
+                    resolve(); // Continue even if detection fails
+                };
+                video.src = URL.createObjectURL(file);
+            } else {
+                resolve();
+            }
+        });
+    };
+
+    const validateAndSetFile = async (file: File) => {
+        const maxSizeBytes = 100 * 1024 * 1024; // 100 MB
+        if (file.size > maxSizeBytes) {
+            alert(`File size exceeds 100 MB limit. Selected file is ${(file.size / (1024 * 1024)).toFixed(2)} MB.`);
+            return false;
+        }
+        // Validate file type
+        const validTypes = ['image/jpeg', 'image/png', 'image/webp', 'video/mp4'];
+        if (!validTypes.includes(file.type)) {
+            alert(`Invalid file type. Please use JPEG, PNG, WebP, or MP4 files.`);
+            return false;
+        }
+
+        // Detect dimensions and auto-set size
+        await detectAndSetDimensions(file);
+
+        setInputReference(file);
+
+        // Create preview URL
+        const url = URL.createObjectURL(file);
+        setPreviewUrl(url);
+
+        return true;
+    };
+
+    // Cleanup preview URL when component unmounts or file changes
+    React.useEffect(() => {
+        return () => {
+            if (previewUrl) {
+                URL.revokeObjectURL(previewUrl);
+            }
+        };
+    }, [previewUrl]);
+
+    const handleInputReferenceChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
         const file = event.target.files?.[0];
         if (file) {
-            const maxSizeBytes = 100 * 1024 * 1024; // 100 MB
-            if (file.size > maxSizeBytes) {
-                alert(`File size exceeds 100 MB limit. Selected file is ${(file.size / (1024 * 1024)).toFixed(2)} MB.`);
-                event.target.value = ''; // Clear the input
-                return;
+            const isValid = await validateAndSetFile(file);
+            if (!isValid && fileInputRef.current) {
+                fileInputRef.current.value = ''; // Clear the input
             }
-            setInputReference(file);
+        }
+    };
+
+    const handlePaste = async (event: React.ClipboardEvent) => {
+        const items = event.clipboardData?.items;
+        if (!items) return;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            if (item.type.startsWith('image/') || item.type.startsWith('video/')) {
+                event.preventDefault();
+                const file = item.getAsFile();
+                if (file) {
+                    await validateAndSetFile(file);
+                }
+                break;
+            }
+        }
+    };
+
+    const handleRemoveFile = () => {
+        setInputReference(null);
+        if (previewUrl) {
+            URL.revokeObjectURL(previewUrl);
+            setPreviewUrl(null);
+        }
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
         }
     };
 
@@ -119,14 +234,7 @@ export function CreationForm({
                         </Label>
                         <Select
                             value={model}
-                            onValueChange={(value) => {
-                                const newModel = value as VideoModel;
-                                setModel(newModel);
-                                // If switching to sora-2 and currently have 1080p selected, switch to portrait 720p
-                                if (newModel === 'sora-2' && (size === '1024x1792' || size === '1792x1024')) {
-                                    setSize('720x1280');
-                                }
-                            }}
+                            onValueChange={(value) => setModel(value as VideoModel)}
                             disabled={isLoading}>
                             <SelectTrigger
                                 id='model-select'
@@ -145,108 +253,189 @@ export function CreationForm({
                     </div>
 
                     <div className='space-y-2'>
-                        <Label htmlFor='size-select' className='text-white'>
+                        <Label htmlFor='size-input' className='text-white'>
                             Size (Resolution)
                         </Label>
-                        <Select value={size} onValueChange={(value) => setSize(value as VideoSize)} disabled={isLoading}>
-                            <SelectTrigger
-                                id='size-select'
-                                className='rounded-md border border-white/20 bg-black text-white focus:border-white/50 focus:ring-white/50'>
-                                <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent className='border-white/20 bg-black text-white'>
-                                <SelectItem value='720x1280' className='focus:bg-white/10 focus:text-white'>
-                                    720x1280 (Portrait - 720p)
-                                </SelectItem>
-                                <SelectItem value='1280x720' className='focus:bg-white/10 focus:text-white'>
-                                    1280x720 (Landscape - 720p)
-                                </SelectItem>
-                                <SelectSeparator className='bg-white/20' />
-                                <SelectGroup>
-                                    <SelectLabel className='px-2 py-1.5 text-xs font-medium text-white/60'>
-                                        Sora 2 Pro Only
-                                    </SelectLabel>
-                                    <SelectItem
-                                        value='1024x1792'
-                                        className='focus:bg-white/10 focus:text-white disabled:opacity-50 disabled:cursor-not-allowed'
-                                        disabled={model === 'sora-2'}>
-                                        1024x1792 (Portrait - 1080p)
-                                    </SelectItem>
-                                    <SelectItem
-                                        value='1792x1024'
-                                        className='focus:bg-white/10 focus:text-white disabled:opacity-50 disabled:cursor-not-allowed'
-                                        disabled={model === 'sora-2'}>
-                                        1792x1024 (Landscape - 1080p)
-                                    </SelectItem>
-                                </SelectGroup>
-                            </SelectContent>
-                        </Select>
+                        <Input
+                            id='size-input'
+                            type='text'
+                            placeholder='e.g., 1280x720 or 736x736'
+                            value={size}
+                            onChange={(e) => setSize(e.target.value as VideoSize)}
+                            disabled={isLoading}
+                            className='rounded-md border border-white/20 bg-black text-white placeholder:text-white/40 focus:border-white/50 focus:ring-white/50'
+                        />
+                        <div className='flex flex-wrap gap-2 text-xs'>
+                            <span className='text-white/40'>Common:</span>
+                            <button
+                                type='button'
+                                onClick={() => setSize('1280x720')}
+                                disabled={isLoading}
+                                className='cursor-pointer text-white/60 underline decoration-dotted hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
+                            >
+                                1280x720
+                            </button>
+                            <span className='text-white/40'>•</span>
+                            <button
+                                type='button'
+                                onClick={() => setSize('720x1280')}
+                                disabled={isLoading}
+                                className='cursor-pointer text-white/60 underline decoration-dotted hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
+                            >
+                                720x1280
+                            </button>
+                            <span className='text-white/40'>•</span>
+                            <button
+                                type='button'
+                                onClick={() => setSize('1024x1024')}
+                                disabled={isLoading}
+                                className='cursor-pointer text-white/60 underline decoration-dotted hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
+                            >
+                                1024x1024
+                            </button>
+                            <span className='text-white/40'>•</span>
+                            <button
+                                type='button'
+                                onClick={() => setSize('1792x1024')}
+                                disabled={isLoading}
+                                className='cursor-pointer text-white/60 underline decoration-dotted hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
+                            >
+                                1792x1024
+                            </button>
+                        </div>
                     </div>
 
-                    <div className='space-y-2'>
-                        <Label className='text-white'>Duration</Label>
-                        <RadioGroup
-                            value={seconds}
-                            onValueChange={(value) => setSeconds(value as VideoSeconds)}
-                            disabled={isLoading}
-                            className='flex gap-4'>
-                            <div className='flex items-center space-x-2'>
-                                <RadioGroupItem
-                                    value='4'
-                                    id='duration-4'
-                                    className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
-                                />
-                                <Label htmlFor='duration-4' className='cursor-pointer text-base text-white/80'>
-                                    4 seconds
-                                </Label>
-                            </div>
-                            <div className='flex items-center space-x-2'>
-                                <RadioGroupItem
-                                    value='8'
-                                    id='duration-8'
-                                    className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
-                                />
-                                <Label htmlFor='duration-8' className='cursor-pointer text-base text-white/80'>
-                                    8 seconds
-                                </Label>
-                            </div>
-                            <div className='flex items-center space-x-2'>
-                                <RadioGroupItem
-                                    value='12'
-                                    id='duration-12'
-                                    className='border-white/40 text-white data-[state=checked]:border-white data-[state=checked]:text-white'
-                                />
-                                <Label htmlFor='duration-12' className='cursor-pointer text-base text-white/80'>
-                                    12 seconds
-                                </Label>
-                            </div>
-                        </RadioGroup>
+                    <div className='space-y-3'>
+                        <div className='flex items-center justify-between'>
+                            <Label className='text-white'>Duration</Label>
+                            <span className='text-sm font-medium text-white'>{seconds} seconds</span>
+                        </div>
+                        <div className='flex gap-4'>
+                            <button
+                                type='button'
+                                onClick={() => setSeconds('4')}
+                                disabled={isLoading}
+                                className={`flex-1 rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                                    seconds === '4'
+                                        ? 'border-white bg-white text-black'
+                                        : 'border-white/20 bg-black text-white hover:border-white/50'
+                                } disabled:cursor-not-allowed disabled:opacity-50`}
+                            >
+                                4 seconds
+                            </button>
+                            <button
+                                type='button'
+                                onClick={() => setSeconds('8')}
+                                disabled={isLoading}
+                                className={`flex-1 rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                                    seconds === '8'
+                                        ? 'border-white bg-white text-black'
+                                        : 'border-white/20 bg-black text-white hover:border-white/50'
+                                } disabled:cursor-not-allowed disabled:opacity-50`}
+                            >
+                                8 seconds
+                            </button>
+                            <button
+                                type='button'
+                                onClick={() => setSeconds('12')}
+                                disabled={isLoading}
+                                className={`flex-1 rounded-md border px-4 py-2 text-sm font-medium transition-colors ${
+                                    seconds === '12'
+                                        ? 'border-white bg-white text-black'
+                                        : 'border-white/20 bg-black text-white hover:border-white/50'
+                                } disabled:cursor-not-allowed disabled:opacity-50`}
+                            >
+                                12 seconds
+                            </button>
+                        </div>
+                        <p className='text-xs text-white/40'>
+                            Select video duration. Supported values: 4, 8, or 12 seconds
+                        </p>
                     </div>
 
                     <div className='space-y-2'>
                         <Label htmlFor='input-reference' className='text-white'>
                             Input Reference (Optional)
                         </Label>
-                        <Input
-                            id='input-reference'
-                            type='file'
-                            accept='image/jpeg,image/png,image/webp,video/mp4'
-                            onChange={handleInputReferenceChange}
-                            disabled={isLoading}
-                            className='flex h-10 cursor-pointer items-center rounded-md border border-white/20 bg-black px-3 text-white leading-tight file:mr-4 file:inline-flex file:h-full file:cursor-pointer file:items-center file:justify-center file:rounded-md file:border-0 file:bg-white/10 file:px-4 file:text-sm file:font-medium file:text-white hover:file:bg-white/20 focus:border-white/50 focus:ring-white/50'
-                        />
-                        {inputReference && (
-                            <p className='text-xs text-white/60'>Selected: {inputReference.name}</p>
+
+                        {!inputReference ? (
+                            <div
+                                onPaste={handlePaste}
+                                className='relative rounded-md border border-dashed border-white/20 bg-black/50 p-6 transition-colors hover:border-white/40 focus-within:border-white/50'
+                            >
+                                <Input
+                                    ref={fileInputRef}
+                                    id='input-reference'
+                                    type='file'
+                                    accept='image/jpeg,image/png,image/webp,video/mp4'
+                                    onChange={handleInputReferenceChange}
+                                    disabled={isLoading}
+                                    className='absolute inset-0 cursor-pointer opacity-0'
+                                />
+                                <div className='flex flex-col items-center justify-center text-center'>
+                                    <Upload className='mb-2 h-8 w-8 text-white/40' />
+                                    <p className='text-sm text-white/60'>
+                                        Click to upload or <span className='font-medium text-white'>paste</span> an image/video
+                                    </p>
+                                    <p className='mt-1 text-xs text-white/40'>
+                                        JPEG, PNG, WebP, or MP4 (max 100 MB)
+                                    </p>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className='space-y-3'>
+                                {previewUrl && (
+                                    <div className='relative overflow-hidden rounded-md border border-white/20 bg-black'>
+                                        {inputReference.type.startsWith('image/') ? (
+                                            <img
+                                                src={previewUrl}
+                                                alt='Input reference preview'
+                                                className='h-auto w-full object-contain max-h-[300px]'
+                                            />
+                                        ) : (
+                                            <video
+                                                src={previewUrl}
+                                                controls
+                                                className='h-auto w-full object-contain max-h-[300px]'
+                                            >
+                                                Your browser does not support the video tag.
+                                            </video>
+                                        )}
+                                    </div>
+                                )}
+                                <div className='flex items-center gap-3 rounded-md border border-white/20 bg-black/50 p-3'>
+                                    <div className='flex-1 truncate text-sm text-white/80'>
+                                        {inputReference.name}
+                                    </div>
+                                    <Button
+                                        type='button'
+                                        variant='ghost'
+                                        size='sm'
+                                        onClick={handleRemoveFile}
+                                        disabled={isLoading}
+                                        className='h-8 w-8 p-0 text-white/60 hover:bg-white/10 hover:text-white'
+                                    >
+                                        <X className='h-4 w-4' />
+                                    </Button>
+                                </div>
+                            </div>
                         )}
+
                         <p className='text-xs text-white/40'>
-                            Upload an image or video to use as the first frame. Must match the selected resolution.
+                            Upload an image or video to use as the first frame reference.
                         </p>
                         <p className='text-xs text-white/40'>
                             Maximum file size is 100 MB. Video input is not available for all organizations.
                         </p>
                     </div>
                 </CardContent>
-                <CardFooter className='border-t border-white/10 p-4'>
+                <CardFooter className='flex flex-col gap-3 border-t border-white/10 p-4'>
+                    <div className='flex w-full items-center justify-between rounded-md bg-white/5 px-4 py-2.5 border border-white/10'>
+                        <span className='text-sm text-white/60'>Estimated Cost</span>
+                        <span className='text-lg font-semibold text-white'>
+                            ${estimatedCost.toFixed(2)}
+                        </span>
+                    </div>
                     <Button
                         type='submit'
                         disabled={isLoading || !prompt.trim()}
