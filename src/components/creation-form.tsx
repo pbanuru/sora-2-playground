@@ -6,10 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
-import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectSeparator, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
 import { Loader2, Sparkles, Upload, X } from 'lucide-react';
+import NextImage from 'next/image';
 import * as React from 'react';
 
 export type CreationFormData = {
@@ -287,15 +287,6 @@ export function CreationForm({
                             <span className='text-white/40'>•</span>
                             <button
                                 type='button'
-                                onClick={() => setSize('1024x1024')}
-                                disabled={isLoading}
-                                className='cursor-pointer text-white/60 underline decoration-dotted hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
-                            >
-                                1024x1024
-                            </button>
-                            <span className='text-white/40'>•</span>
-                            <button
-                                type='button'
                                 onClick={() => setSize('1792x1024')}
                                 disabled={isLoading}
                                 className='cursor-pointer text-white/60 underline decoration-dotted hover:text-white disabled:cursor-not-allowed disabled:opacity-50'
@@ -387,9 +378,12 @@ export function CreationForm({
                                 {previewUrl && (
                                     <div className='relative overflow-hidden rounded-md border border-white/20 bg-black'>
                                         {inputReference.type.startsWith('image/') ? (
-                                            <img
+                                            <NextImage
                                                 src={previewUrl}
                                                 alt='Input reference preview'
+                                                width={1280}
+                                                height={720}
+                                                unoptimized
                                                 className='h-auto w-full object-contain max-h-[300px]'
                                             />
                                         ) : (
